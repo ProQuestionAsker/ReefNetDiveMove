@@ -1,0 +1,301 @@
+library(diveMove)
+
+Total19 <-read.table("C:/Users/owner/Desktop/Diving/CSVs/12-019 Total Dives.csv", header=FALSE, sep=",")
+
+colnames(Total19) <-c('1', 'SUUnit', 'FileID', 'Year', 'Month', 'Day', 'StartHour', 'StartMin', 'StartSec', 'SecFromStart', 'Pressure', 'Temp')
+
+Total19$Depth <- with(Total19, (Pressure-1010)*0.010197)
+
+Total19$Date <-with(Total19, ISOdatetime(Year, Month, Day, StartHour, StartMin, StartSec)+(SecFromStart), tz="America/New_York")
+
+Total19 <- subset(Total19, select = c(Date,Depth))
+
+
+
+begintimer <- Sys.time()
+Starttime <- Total19[1,1]
+Endtime <- Total19[length(Total19$Date),1]
+#Endtime <- Total19[10000,1]
+x <- 1
+y <- 1
+z <- Total19[1,1]
+N <- cbind(Endtime)-cbind(Starttime)
+templist <- NULL
+templist <- matrix(0,N,2)
+temprecord <- Total19[y,1]
+tempdepth <- Total19[y,2]
+previoustempdepth <- Total19[y-1,2]
+previoustemprecord <- Total19[y-1,1]
+
+while (z < Endtime){
+	if(z == temprecord) {
+		templist[x,] <- c(temprecord,tempdepth)
+		y <- y + 1
+		temprecord <- Total19[y,1]
+		tempdepth <- Total19[y,2]
+		previoustempdepth <- Total19[y-1,2]
+		previoustemprecord <- Total19[y-1,1]
+	}
+	else{
+		if(cbind(temprecord)-cbind(previoustemprecord) < 6)
+		{
+			templist[x,] <- c(z,as.numeric(mean(c(previoustempdepth,tempdepth))))
+		}
+		else
+		{
+			internalN <- NULL
+			internaltemplist <- NULL
+			internalN <- cbind(temprecord)-cbind(z)
+			internaltemplist <- matrix(0,internalN,2)  
+			internaltemplist[,1] <- z:(temprecord-1)
+			internaltemplist[,2] <- 0
+			templist[x:(x+internalN-1),1:2] <- internaltemplist
+			z <- temprecord - 1
+			x <- x + internalN - 1
+		}
+	}
+	z <- z + 1
+	x <- x + 1	
+}
+
+
+
+stoptimer <- Sys.time()
+stoptimer-begintimer
+
+
+templist[,2][templist[,2]==0]<-NA
+
+zz <- system.file(file.path("data", "dives.csv"), package="diveMove")
+
+srcfn <- basename(zz)
+
+time <-as.POSIXct(templist[,1]-(300*60), origin="1970-01-01", tz="America/New_York")
+sealX <-createTDR(time, templist[,2], file=srcfn)
+dcalib <-calibrateDepth(sealX, dry.thr=300, wet.thr=30, dive.thr=0.3, zoc.method=c("offset"), offset=0)
+
+
+
+
+tdrX <- diveStats(dcalib)
+stamps <- stampDive(dcalib, ignoreZ=TRUE)
+tdrX.tab <- data.frame(stamps, tdrX)
+summary(tdrX.tab)
+
+time <-as.POSIXct(templist[,1]-18000, origin="1970-01-01", tz="America/New_York")
+
+begindate <- trunc(time[1],"day") 
+lastenddate <- trunc(time[length(time)],"day")+86399  
+
+while(begindate < lastenddate){  
+
+	enddate <- trunc(begindate, "day") + 86399   
+
+	startindex <- which(time == min(time[time>=begindate])) 
+
+	endindex  <- which(time == max(time[time<=enddate])) 
+
+	while((endindex < length(templist[,2]) & !is.na(templist[endindex,2]) & templist[endindex,2] >=0.3)){
+		
+		enddate <- enddate + 1
+		
+		endindex  <- which(time == max(time[time<=enddate])) 
+		
+	}
+
+	if(!is.na(which(!is.na(templist[startindex:endindex,2]))[1])){
+
+		time <-as.POSIXct(templist[,1]-(300*60), origin="1970-01-01", tz="America/New_York")
+
+		sealX <-createTDR(time[startindex:endindex], templist[startindex:endindex,2], file=srcfn)
+
+		dcalib <-calibrateDepth(sealX, dry.thr=300, wet.thr=30, dive.thr=0.3, zoc.method=c("offset"), offset=0)
+
+		tdrX <- diveStats(dcalib)
+
+		stamps <- stampDive(dcalib, ignoreZ=TRUE)
+
+		tdrX.tab <- data.frame(stamps, tdrX)
+
+		a<-summary(tdrX.tab)
+
+	##dive stats (begin and end of each day, duration of dive, post dive duration, max depth, dives detected, wet phases)
+
+		beginning <-time[startindex]
+
+		end <-time[endindex]
+
+		divetime<-a[,11]
+
+		maxdepth<-a[,18]
+
+
+		divesdetect<-max(dcalib@dive.activity$dive.id, na.rm=TRUE)
+		
+
+
+		dry<-dcalib@gross.activity$activity=="L"
+
+		dd<-length(unique(dcalib@gross.activity$phase.id[dry]))
+
+		wet<-dcalib@gross.activity$activity=="W"
+
+		wetz<-dcalib@gross.activity$activity=="Z"
+
+		wetphases<-length(unique(dcalib@gross.activity$phase.id[wet|wetz]))
+
+	##Corrected Post-dive Duration (under 300 seconds)
+		postdives <- tdrX.tab$postdive.dur
+		postdives.diff <-abs(diff(postdives))
+		postdives.diff <-postdives.diff[postdives.diff <290]
+		sumpostdives <-summary(postdives.diff)
+		
+		
+
+		short<-cbind.data.frame(beginning, end, divetime, maxdepth, divesdetect, wetphases)
+
+			 write.table(short, file="C:/Users/owner/Desktop/AllDiveData/19/test.csv", append=TRUE, sep=",", row.names=FALSE, col.names=FALSE)
+
+
+	##Time Budget information per bout per day
+
+			
+		budget<-timeBudget(dcalib,TRUE)
+		attributes(budget$beg)$tzone <-"America/New_York"
+		attributes(budget$end)$tzone <-"America/New_York"
+		timediving<-as.numeric((budget$end-budget$beg), units="mins")
+
+
+
+
+		budgetstats<-cbind.data.frame(budget, timediving)
+
+			write.table(budgetstats, file="C:/Users/owner/Desktop/AllDiveData/19/budget.csv", append=TRUE, sep=",", row.names=FALSE, col.names=FALSE)
+
+
+	##Summarized Time Budget information per day
+		
+
+		wet=subset(budgetstats, activity=="W")
+		
+		wtd<-as.numeric(sum(wet$timediving), units="mins")
+		percentwet<-(wtd/1440)*100
+
+		dry=subset(budgetstats, activity=="L")
+		
+		dtd<-as.numeric(sum(dry$timediving), units="mins")
+		percentdry<-(dtd/1440)*100
+
+
+		date<-time[startindex]
+
+
+		perday<-cbind.data.frame(date, wtd, dtd, percentwet, percentdry)
+
+			write.table(perday, file="C:/Users/owner/Desktop/AllDiveData/19/Perday.csv", append=TRUE, sep=",", row.names=FALSE, col.names=FALSE)
+
+
+	##Categorizing dive times per day
+
+		divetime<-tdrX$divetim
+		divetimedf<-as.data.frame(divetime)
+		divetimedf$timecat[divetime<=10] <-"0-10"
+		divetimedf$timecat[divetime > 10 & divetime <=20] <- "11-20"
+		divetimedf$timecat[divetime > 20 & divetime <=30] <- "21-30"
+		divetimedf$timecat[divetime > 30 & divetime <=40] <- "31-40"
+		divetimedf$timecat[divetime > 40 & divetime <=50] <- "41-50"
+		divetimedf$timecat[divetime > 50 & divetime <=60] <- "51-60"
+		divetimedf$timecat[divetime > 60 & divetime <=70] <- "61-70"
+		divetimedf$timecat[divetime > 70 & divetime <=80] <- "71-80"
+		divetimedf$timecat[divetime > 80 & divetime <=90] <- "81-90"
+		divetimedf$timecat[divetime > 90 & divetime <=100] <- "91-100"
+		divetimedf$timecat[divetime > 100 & divetime <=110] <- "101-110"
+		divetimedf$timecat[divetime > 110 & divetime <=120] <- "111-120"
+		divetimedf$timecat[divetime > 120 & divetime <=130] <- "121-130"
+		divetimedf$timecat[divetime > 130 & divetime <=140] <- "131-140"
+		divetimedf$timecat[divetime > 140 & divetime <=150] <- "141-150"
+		divetimedf$timecat[divetime > 150 & divetime <=160] <- "151-160"
+		divetimedf$timecat[divetime > 160 & divetime <=170] <- "161-170"
+ 		divetimedf$timecat[divetime > 170 & divetime <=180] <- "171-180"
+		divetimedf$timecat[divetime > 180 & divetime <=190] <- "181-190"
+ 		divetimedf$timecat[divetime > 190 & divetime <=200] <- "191-200"
+ 		divetimedf$timecat[divetime > 200 & divetime <=210] <- "201-210"
+ 		divetimedf$timecat[divetime > 210 & divetime <=220] <- "211-220"
+ 		divetimedf$timecat[divetime > 220 & divetime <=230] <- "221-230"
+ 		divetimedf$timecat[divetime > 230 & divetime <=240] <- "231-240"
+		divetimedf$timecat[divetime > 240 & divetime <=250] <- "241-250"
+		divetimedf$timecat[divetime > 250 & divetime <=260] <- "251-260"
+		divetimedf$timecat[divetime > 260 & divetime <=270] <- "261-270"
+		divetimedf$timecat[divetime > 270 & divetime <=280] <- "271-280"
+		divetimedf$timecat[divetime > 280 & divetime <=290] <- "281-290"
+		divetimedf$timecat[divetime > 290 & divetime <=300] <- "291-300"
+		divetimedf$timecat[divetime >300] <-"300+"
+
+		A <-(((sum(divetimedf$timecat=="0-10"))/divesdetect)*100)
+		B <-(((sum(divetimedf$timecat=="11-20"))/divesdetect)*100)
+		C <-(((sum(divetimedf$timecat=="21-30"))/divesdetect)*100)
+		D <-(((sum(divetimedf$timecat=="31-40"))/divesdetect)*100)
+		E <-(((sum(divetimedf$timecat=="41-50"))/divesdetect)*100)
+		F <-(((sum(divetimedf$timecat=="51-60"))/divesdetect)*100)
+		G <-(((sum(divetimedf$timecat=="61-70"))/divesdetect)*100)
+		H <-(((sum(divetimedf$timecat=="71-80"))/divesdetect)*100)
+		I <-(((sum(divetimedf$timecat=="81-90"))/divesdetect)*100)
+		J <-(((sum(divetimedf$timecat=="91-100"))/divesdetect)*100)
+		K <-(((sum(divetimedf$timecat=="101-110"))/divesdetect)*100)
+		L <-(((sum(divetimedf$timecat=="111-120"))/divesdetect)*100)
+		M <-(((sum(divetimedf$timecat=="121-130"))/divesdetect)*100)
+		N <-(((sum(divetimedf$timecat=="131-140"))/divesdetect)*100)
+		O <-(((sum(divetimedf$timecat=="141-150"))/divesdetect)*100)
+		P <-(((sum(divetimedf$timecat=="151-160"))/divesdetect)*100)
+		Q <-(((sum(divetimedf$timecat=="161-170"))/divesdetect)*100)
+		R <-(((sum(divetimedf$timecat=="171-180"))/divesdetect)*100)
+		S <-(((sum(divetimedf$timecat=="181-190"))/divesdetect)*100)
+		T <-(((sum(divetimedf$timecat=="191-200"))/divesdetect)*100)
+		U <-(((sum(divetimedf$timecat=="201-210"))/divesdetect)*100)
+		V <-(((sum(divetimedf$timecat=="211-220"))/divesdetect)*100)
+		W <-(((sum(divetimedf$timecat=="221-230"))/divesdetect)*100)
+		X <-(((sum(divetimedf$timecat=="231-240"))/divesdetect)*100)
+		Y <-(((sum(divetimedf$timecat=="241-250"))/divesdetect)*100)
+		Z <-(((sum(divetimedf$timecat=="251-260"))/divesdetect)*100)
+		AA<-(((sum(divetimedf$timecat=="261-270"))/divesdetect)*100)
+		BB<-(((sum(divetimedf$timecat=="271-280"))/divesdetect)*100)
+		CC<-(((sum(divetimedf$timecat=="281-290"))/divesdetect)*100)
+		DD<-(((sum(divetimedf$timecat=="291-300"))/divesdetect)*100)
+		EE<-(((sum(divetimedf$timecat=="300+"))/divesdetect)*100)
+		
+		categories<-cbind.data.frame(date, A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z,AA,BB,CC,DD,EE)
+		colnames(categories)<-c("date","0-10", "11-20", "21-30", "31-40", "41-50", "51-60", "61-70", "71-80", "81-90", "91-100", "101-110", "111-120", "121-130", "131-140", "141-150", "151-160", "161-170", "171-180", "181-190", "191-200", "201-210", "211-220", "221-230", "231-240", "241-250", "251-260", "261-270", "271-280", "281-290", "291-300", "300+")
+
+		write.table(categories, file="C:/Users/owner/Desktop/AllDiveData/19/categories.csv", append=TRUE, sep=",", row.names=FALSE, col.names=FALSE)		
+
+	##Categorizing dive depths per day
+		divedepth<-tdrX$maxdep
+		divedepthdf<-as.data.frame(divedepth)
+		divedepthdf$depthcat[divedepth <=0.5] <-"0-0.5m"
+ 		divedepthdf$depthcat[divedepth >0.5 & divedepth <=1.0] <-"0.6-1.0m"
+ 		divedepthdf$depthcat[divedepth >1.0 & divedepth <=1.5] <-"1.1-1.5m"
+		divedepthdf$depthcat[divedepth >1.5 & divedepth <=2.0] <-"1.6-2.0m"
+ 		divedepthdf$depthcat[divedepth >2.0 & divedepth <=2.5] <-"2.1-2.5m"
+ 		divedepthdf$depthcat[divedepth >2.5 & divedepth <=3.0] <-"2.6-3.0m"
+
+		b<-(((sum(divedepthdf$depthcat=="0-0.5m"))/divesdetect)*100)
+		c<-(((sum(divedepthdf$depthcat=="0.6-1.0m"))/divesdetect)*100)
+		d<-(((sum(divedepthdf$depthcat=="1.1-1.5m"))/divesdetect)*100)
+		e<-(((sum(divedepthdf$depthcat=="1.6-2.0m"))/divesdetect)*100)
+		f<-(((sum(divedepthdf$depthcat=="2.1-2.5m"))/divesdetect)*100)
+		g<-(((sum(divedepthdf$depthcat=="2.6-3.0m"))/divesdetect)*100)
+
+		depthcategories<-cbind.data.frame(date, b,c,d,e,f,g)
+		 colnames(depthcategories)<-c("date", "0-0.5 m", "0.6-1.0 m", "1.1-1.5 m", "1.6-2.0 m", "2.1-2.5 m", "2.6-3.0 m")
+		
+		write.table(depthcategories, file="C:/Users/owner/Desktop/AllDiveData/19/depthcategories.csv", append=TRUE, sep=" ", row.names=FALSE, col.names=FALSE)		
+	
+	
+
+	}
+
+	begindate <- enddate + 1 
+
+} 
+
+
