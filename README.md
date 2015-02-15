@@ -8,13 +8,6 @@ diveMove Package: https://github.com/spluque/divemove or http://cran.r-project.o
 
 This code defines a "dive" as a period of time spent below 0.3 m.
 
-It returns dive stats which include daily statistics: 
-  Beginning and ending times of each day
-  Duration of dive
-  Post-dive duration (i.e. the time spent between one dive and the next)
-  Maximum depth
-  The number of dives detected within that day
-  Wet phases (i.e. the number of time periods throughout the day that the animal spent making consecutive dives     without spending time outside of its pool.)
+It returns dive stats which include daily statistics and categorical breakdowns of dives collected.
   
-  
-  All other terms follow the same nomenclature as described by the diveMove package.  
+All other terms follow the same nomenclature as described by the diveMove package.  
